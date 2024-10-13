@@ -14,86 +14,6 @@ import (
 	"github.com/alexmullins/zip"
 )
 
-// Process password encrypted csv audit file which is in zip format
-func GetCSVFromZipURL(fileURL, filePassword string) (ioReader io.Reader, err error) {
-
-	resp, err := http.Get(fileURL)
-	if err != nil {
-		fmt.Println(err)
-		//return ioReader, err
-	}
-	defer resp.Body.Close()
-
-	buf := &bytes.Buffer{}
-
-	_, err = io.Copy(buf, resp.Body)
-	if err != nil {
-		return ioReader, err
-	}
-
-	b := bytes.NewReader(buf.Bytes())
-	r, err := zip.NewReader(b, int64(b.Len()))
-	if err != nil {
-		return ioReader, err
-	}
-
-	for _, f := range r.File {
-		if f.IsEncrypted() {
-			f.SetPassword(filePassword)
-		}
-		//todo error handling for bad password
-		ioReader, err = f.Open()
-		if err != nil {
-			return ioReader, err
-		}
-
-		//return ioReader, err
-	}
-
-	return ioReader, err
-}
-
-// parse string fields for floats & remove comma thousands separataros
-func parseField(s string) float64 {
-	var f float64
-	s = strings.ReplaceAll(s, ",", "")
-	f, _ = strconv.ParseFloat(s, 64)
-	return f
-}
-
-func unmarschalCSV(rows [][]string) []Audit {
-	var audits []Audit
-	for _, r := range rows {
-		datetime, _ := time.Parse("2006/01/02 3:04 PM", r[0])
-		ammount := parseField(r[6])
-		accuredstarscoins := parseField(r[7])
-		tmoney := parseField(r[8])
-		wmoney := parseField(r[9])
-		balance := parseField(r[10])
-		totalstarcoins := parseField(r[11])
-		ttmoney := parseField(r[12])
-		wwmoney := parseField(r[13])
-
-		audit := Audit{DateTime: datetime,
-			Action:            r[1],
-			Tournament:        r[2],
-			Game:              r[3],
-			Currency:          r[5],
-			Ammount:           ammount,
-			Accuredstarscoins: accuredstarscoins,
-			Tmoney:            tmoney,
-			Wmoney:            wmoney,
-			Balance:           balance,
-			Totalstarcoins:    totalstarcoins,
-			TTmoney:           ttmoney,
-			WWmoney:           wwmoney,
-		}
-		audits = append(audits, audit)
-	}
-	return audits
-
-}
-
 // Audit represents pokerstars audit structure
 type Audit struct {
 	DateTime          time.Time `csv:"datetime"`
@@ -101,34 +21,121 @@ type Audit struct {
 	Tournament        string    `csv:"tournament"`
 	Game              string    `csv:"game"`
 	Currency          string    `csv:"currency"`
-	Ammount           float64   `csv:"ammount"`
+	Amount            float64   `csv:"amount"`
 	Tmoney            float64   `csv:"tmoney"`
-	Accuredstarscoins float64   `csv:"accuredstarscoins"`
+	AccruedStarsCoins float64   `csv:"accruedstarscoins"`
 	Wmoney            float64   `csv:"wmoney"`
 	Balance           float64   `csv:"balance"`
-	Totalstarcoins    float64   `csv:"totalstarcoins"`
+	TotalStarCoins    float64   `csv:"totalstarcoins"`
 	TTmoney           float64   `csv:"ttmoney"`
 	WWmoney           float64   `csv:"wwmoney"`
 }
 
-func main() {
-	//todo accept only zip files from http://reports.rationalwebservices.com/reports/filename.zip
-	f, err := GetCSVFromZipURL("http://reports.rationalwebservices.com/reports/xxx.zip", "12345")
+// DownloadAndUnzipFile downloads a zip file from a URL
+func DownloadAndUnzipFile(fileURL string) (*zip.Reader, error) {
+	resp, err := http.Get(fileURL)
 	if err != nil {
-		log.Fatal(err)
+		return nil, fmt.Errorf("failed to download file: %w", err)
 	}
-	reader := csv.NewReader(f)
+	defer resp.Body.Close()
+
+	buf := new(bytes.Buffer)
+	_, err = io.Copy(buf, resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to copy response body: %w", err)
+	}
+
+	reader := bytes.NewReader(buf.Bytes())
+	return zip.NewReader(reader, int64(buf.Len()))
+}
+
+// ExtractCSVFromZip extracts and decrypts the CSV file from a zip archive
+func ExtractCSVFromZip(zipReader *zip.Reader, filePassword string) (io.Reader, error) {
+	for _, file := range zipReader.File {
+		if file.IsEncrypted() {
+			file.SetPassword(filePassword)
+		}
+
+		f, err := file.Open()
+		if err != nil {
+			return nil, fmt.Errorf("failed to open file in zip: %w", err)
+		}
+		return f, nil
+	}
+	return nil, fmt.Errorf("no file found in zip archive")
+}
+
+// ParseFloatField parses a string field, removing commas and converting to float
+func ParseFloatField(s string) float64 {
+	s = strings.ReplaceAll(s, ",", "")
+	f, _ := strconv.ParseFloat(s, 64)
+	return f
+}
+
+// UnmarshalCSV converts a CSV row into an Audit struct
+func UnmarshalCSV(rows [][]string) []Audit {
+	var audits []Audit
+	for _, row := range rows {
+		datetime, _ := time.Parse("2006/01/02 3:04 PM", row[0])
+		amount := ParseFloatField(row[6])
+		accruedStarsCoins := ParseFloatField(row[7])
+		tmoney := ParseFloatField(row[8])
+		wmoney := ParseFloatField(row[9])
+		balance := ParseFloatField(row[10])
+		totalStarCoins := ParseFloatField(row[11])
+		ttmoney := ParseFloatField(row[12])
+		wwmoney := ParseFloatField(row[13])
+
+		audit := Audit{
+			DateTime:          datetime,
+			Action:            row[1],
+			Tournament:        row[2],
+			Game:              row[3],
+			Currency:          row[5],
+			Amount:            amount,
+			AccruedStarsCoins: accruedStarsCoins,
+			Tmoney:            tmoney,
+			Wmoney:            wmoney,
+			Balance:           balance,
+			TotalStarCoins:    totalStarCoins,
+			TTmoney:           ttmoney,
+			WWmoney:           wwmoney,
+		}
+		audits = append(audits, audit)
+	}
+	return audits
+}
+
+func main() {
+	fileURL := "http://reports.rationalwebservices.com/reports/xxx.zip"
+	filePassword := "12345"
+
+	zipReader, err := DownloadAndUnzipFile(fileURL)
+	if err != nil {
+		log.Fatalf("Error downloading or unzipping file: %v", err)
+	}
+
+	csvFile, err := ExtractCSVFromZip(zipReader, filePassword)
+	if err != nil {
+		log.Fatalf("Error extracting CSV: %v", err)
+	}
+
+	reader := csv.NewReader(csvFile)
 	reader.FieldsPerRecord = -1
-	rows_pre, _ := reader.ReadAll()
-	//Skip first three rows
-	rows := rows_pre[3:]
-	audits := unmarschalCSV(rows)
+	rowsPre, err := reader.ReadAll()
+	if err != nil {
+		log.Fatalf("Error reading CSV: %v", err)
+	}
+
+	rows := rowsPre[3:]
+	audits := UnmarshalCSV(rows)
+
 	var sum float64
-	for _, a := range audits {
-		//if strings.Contains(a.Tournament, "Spin") && !strings.Contains(a.Tournament, "Max") {
-		if strings.Contains(a.Action, "Chest") {
-			sum = sum + a.Ammount + (a.Accuredstarscoins / 100)
+	for _, audit := range audits {
+		if strings.Contains(audit.Action, "Chest") {
+			sum += audit.Amount + (audit.AccruedStarsCoins / 100)
 		}
 	}
-	fmt.Println(sum)
+
+	fmt.Printf("Total sum: %.2f\n", sum)
 }
